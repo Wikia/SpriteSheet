@@ -1,4 +1,9 @@
 <?php
+
+use MediaWiki\Linker\LinkTarget;
+use MediaWiki\MediaWikiServices;
+use Wikimedia\Rdbms\IResultWrapper;
+
 /**
  * SpriteSheet
  * SpriteSheet Class
@@ -21,7 +26,7 @@ class SpriteSheet {
 	/**
 	 * Title Object
 	 *
-	 * @var		object
+	 * @var		LinkTarget
 	 */
 	private $title = false;
 
@@ -67,7 +72,8 @@ class SpriteSheet {
 	 * @return	void
 	 */
 	public function __construct() {
-		$this->DB = wfGetDB(DB_MASTER);
+		$this->DB = MediaWikiServices::getInstance()->getDBLoadBalancer()
+			->getConnectionRef( DB_PRIMARY );
 	}
 
 	/**
@@ -100,7 +106,7 @@ class SpriteSheet {
 	 * @param	boolean	[Optional] Stash the object to quick retrieval.
 	 * @return	mixed	SpriteSheet or false on error.
 	 */
-	static public function newFromTitle(Title $title, $useMemoryCache = false) {
+	static public function newFromTitle( LinkTarget $title, $useMemoryCache = false) {
 		if ($title->getNamespace() != NS_FILE || !$title->getDBkey()) {
 			return false;
 		}
@@ -223,7 +229,6 @@ class SpriteSheet {
 
 		$spriteSheetId = $this->getId();
 
-		$this->DB->startAtomic(__METHOD__);
 		if ($spriteSheetId > 0) {
 			$oldResult = $this->DB->select(
 				['spritesheet'],
@@ -233,9 +238,10 @@ class SpriteSheet {
 			);
 			$oldRow = $oldResult->fetchRow();
 			if (is_array($oldRow)) {
+				$data = $this->getDataForUpdate( $oldRow );
 				$this->DB->insert(
 					'spritesheet_rev',
-					$oldRow,
+					$this->quoteDBKeys( $data ),
 					__METHOD__
 				);
 			}
@@ -243,7 +249,7 @@ class SpriteSheet {
 			//Do the update.
 			$result = $this->DB->update(
 				'spritesheet',
-				$save,
+				$this->quoteDBKeys( $this->getDataForUpdate( $save ) ),
 				['spritesheet_id' => $spriteSheetId],
 				__METHOD__
 			);
@@ -251,20 +257,17 @@ class SpriteSheet {
 			//Do the insert.
 			$result = $this->DB->insert(
 				'spritesheet',
-				$save,
+				$this->quoteDBKeys( $this->getDataForUpdate( $save ) ),
 				__METHOD__
 			);
 			$spriteSheetId = $this->DB->insertId();
 		}
 
 		if ($result !== false) {
-			global $wgUser;
-
 			//Enforce sanity on data.
 			$this->data['spritesheet_id']	= $spriteSheetId;
 			$this->data['edited']			= $save['edited'];
-
-			$this->DB->endAtomic(__METHOD__);
+			$user = RequestContext::getMain()->getUser();
 
 			$extra = [];
 			$oldSpriteSheet = $this->getPreviousRevision();
@@ -274,7 +277,7 @@ class SpriteSheet {
 			}
 
 			$log = new ManualLogEntry('sprite', 'sheet');
-			$log->setPerformer($wgUser);
+			$log->setPerformer($user);
 			$log->setTarget($this->getTitle());
 			$log->setComment(null);
 			$log->setParameters($extra);
@@ -282,8 +285,6 @@ class SpriteSheet {
 			$log->publish($logId);
 
 			$success = true;
-		} else {
-			$this->DB->cancelAtomic(__METHOD__);
 		}
 
 		return $success;
@@ -332,7 +333,7 @@ class SpriteSheet {
 	 * @param	object	Title
 	 * @return	void
 	 */
-	public function setTitle(Title $title) {
+	public function setTitle( LinkTarget $title) {
 		$this->title = $title;
 
 		$this->data['title'] = $this->title->getDBkey();
@@ -443,7 +444,8 @@ class SpriteSheet {
 	 * @return	mixed	HTML or false on error.
 	 */
 	public function getSpriteHtml($column, $row, $thumbWidth = null, $link = false) {
-		$file = wfFindFile($this->getTitle());
+		$file = MediaWikiServices::getInstance()->getRepoGroup()->findFile( $this->getTitle() );
+
 
 		$column = intval($column);
 		$row = intval($row);
@@ -602,7 +604,7 @@ class SpriteSheet {
 	 * @return	mixed	HTML or false on error.
 	 */
 	public function getSliceHtml($x, $y, $width, $height, $thumbWidth = null, $link = false, $pixelMode = false) {
-		$file = wfFindFile($this->getTitle());
+		$file = MediaWikiServices::getInstance()->getRepoGroup()->findFile( $this->getTitle() );
 
 		$link = $this->getUrlFromText($link);
 
@@ -755,7 +757,7 @@ class SpriteSheet {
 	 * @return	mixed	Next revision ID or false if it is not an old revision.
 	 */
 	static public function getNextRevisionId($revisionId) {
-		$DB = wfGetDB(DB_MASTER);
+		$DB = wfGetDB(DB_PRIMARY);
 
 		$revResult = $DB->select(
 			['spritesheet_rev'],
@@ -782,8 +784,6 @@ class SpriteSheet {
 	 * @return	array	Links for performing actions against revisions.
 	 */
 	public function getRevisionLinks($previousId = false) {
-		global $wgUser;
-
 		if ($previousId === false) {
 			$previousRevision = $this->getPreviousRevision();
 			$arguments['sheetPreviousId'] = $previousRevision->getId();
@@ -791,10 +791,22 @@ class SpriteSheet {
 			$arguments['sheetPreviousId'] = intval($previousId);
 		}
 
-		$links['diff'] = Linker::link($this->getTitle(), wfMessage('diff')->escaped(), [], array_merge($arguments, ['sheetAction' => 'diff']));
+		$linkRenderer = MediaWikiServices::getInstance()->getLinkRenderer();
+		$links['diff'] = $linkRenderer->makeLink(
+			$this->getTitle(),
+			wfMessage( 'diff' )->escaped(),
+			[],
+			array_merge( $arguments, [ 'sheetAction' => 'diff' ] )
+		);
 
-		if ($wgUser->isAllowed('spritesheet_rollback')) {
-			$links['rollback'] = Linker::link($this->getTitle(), wfMessage('rollbacklink')->escaped(), [], array_merge($arguments, ['sheetAction' => 'rollback']));
+		$user = RequestContext::getMain()->getUser();
+		if ($user->isAllowed('spritesheet_rollback')) {
+			$links['rollback'] = $linkRenderer->makeLink(
+				$this->getTitle(),
+				wfMessage( 'rollbacklink' )->escaped(),
+				[],
+				array_merge( $arguments, [ 'sheetAction' => 'rollback' ] )
+			);
 		}
 
 		return $links;
@@ -831,165 +843,47 @@ class SpriteSheet {
 		}
 		return false;
 	}
-}
-
-class SpriteSheetRemote extends SpriteSheet {
-	/**
-	 * Last API Error Message
-	 *
-	 * @var		string
-	 */
-	private $lastApiErrorMessage = false;
 
 	/**
-	 * Image storage from the remote repository.
+	 * SpriteSheet table is using "prohibited" column names therefore all of them should be quoted
 	 *
-	 * @var		object
+	 * @param array $data
+	 * @return array
 	 */
-	private $image = null;
-
-	/**
-	 * Create a new instance of this class from a Title object.
-	 *
-	 * @access	public
-	 * @param	object	Title
-	 * @param	boolean	[Optional] Stash the object to quick retrieval.
-	 * @return	mixed	SpriteSheet or false on error.
-	 */
-	static public function newFromTitle(Title $title, $useMemoryCache = false) {
-		if ($title->getNamespace() != NS_FILE || !$title->getDBkey()) {
-			return false;
+	private function quoteDBKeys( array $data ) {
+		$quotedData = [];
+		foreach ($data as $key => $value) {
+			$quotedData[$this->DB->addIdentifierQuotes( $key )] = $value;
 		}
 
-		if ($useMemoryCache && isset(self::$spriteSheets[$title->getDBkey()])) {
-			return self::$spriteSheets[$title->getDBkey()];
-		}
-
-		$spriteSheet = new self();
-		$spriteSheet->setTitle($title);
-
-		$spriteSheet->newFrom = 'remote';
-
-		$success = $spriteSheet->load();
-
-		if ($success) {
-			self::$spriteSheets[$title->getDBkey()] = $spriteSheet;
-
-			return $spriteSheet;
-		}
-		return false;
+		return $quotedData;
 	}
 
 	/**
-	 * Load from the remote API.
-	 *
-	 * @access	public
-	 * @param	array	[Unused]
-	 * @return	boolean	Success
+	 * FetchRow return data that has both keys as column and as index, therefore
+	 * we need to process it before inserting, so we have only array with
+	 * `column => value` pairs
+	 * @param array $data
+	 * @return array
 	 */
-	public function load($row = null) {
-		if (!$this->isLoaded) {
-			$this->image = wfFindFile($this->getTitle());
-
-			if ($this->image !== false && $this->image->exists() && !$this->image->isLocal() && $this->image->getRepo() instanceof ForeignAPIRepo) {
-				$query = [
-					'action'	=> 'spritesheet',
-					'do'		=> 'getSpriteSheet',
-					'title'		=> $this->getTitle()->getDBkey(), //DO NOT MOVE THIS TO THE BOTTOM.  NEVER.  Mediawiki has a dumb as fuck bug called "class IEUrlExtension" which will block all requests if the file name is at the end of the parameter list.
-					'format'	=> 'json'
-				];
-
-				//Make sure to change this cache piece back to 300 seconds once this extension is out of development.
-				$data = $this->image->getRepo()->httpGetCached('SpriteSheet', $query, 0);
-
-				if ($data) {
-					$spriteData = FormatJson::decode($data, true);
-					if ($spriteData['success'] === true && is_array($spriteData['data']) && $spriteData['data']['title'] == $this->getTitle()->getDBkey()) {
-						$this->setColumns($spriteData['data']['columns']);
-						$this->setRows($spriteData['data']['rows']);
-						$this->setInset($spriteData['data']['inset']);
-						$this->setTitle($this->getTitle());
-
-						$this->isLoaded = true;
-
-						return true;
-					}
-				}
-			}
-		}
-
-		return false;
+	private function getDataForUpdate( array $data ) {
+		return array_intersect_key(
+			$data,
+			$this->getQueryInfo()['fields']
+		);
 	}
 
-	/**
-	 * Return the last error message from the remote API if produced.
-	 *
-	 * @access	public
-	 * @return	mixed	String error message or false if none has been set.
-	 */
-	public function getLastApiErrorMessage() {
-		return $this->lastApiErrorMessage;
-	}
-
-	/**
-	 * Dummy function to prevent attempts to save the remote SpriteSheet locally.
-	 *
-	 * @access	public
-	 * @return	boolean	Success
-	 */
-	public function save() {
-		return true;
-	}
-
-	/**
-	 * Return if this is a local SpriteSheet.
-	 *
-	 * @access	public
-	 * @return	boolean	False
-	 */
-	public function isLocal() {
-		return false;
-	}
-
-	/**
-	 * Return all named sprites/slices for thie sprite sheet.
-	 *
-	 * @access	public
-	 * @return	array	Named Sprite Cache
-	 */
-	public function getAllSpriteNames() {
-		if ($this->image !== false && $this->image->exists() && !$this->image->isLocal()) {
-			$query = [
-				'action'	=> 'spritesheet',
-				'do'		=> 'getAllSpriteNames',
-				'title'		=> $this->getTitle()->getDBkey(), //DO NOT MOVE THIS TO THE BOTTOM.  NEVER.  Mediawiki has a dumb as fuck bug called "class IEUrlExtension" which will block all requests if the file name is at the end of the parameter list.
-				'format'	=> 'json'
-			];
-
-			//Make sure to change this cache piece back to 300 seconds once this extension is out of development.
-			$data = $this->image->getRepo()->httpGetCached('SpriteSheet', $query, 0);
-			return;
-			if ($data) {
-				$spriteData = FormatJson::decode($data, true);
-				if ($spriteData['success'] === true && is_array($spriteData['data']) && $spriteData['data']['title'] == $this->getTitle()->getDBkey()) {
-					$this->setColumns($spriteData['data']['columns']);
-					$this->setRows($spriteData['data']['rows']);
-					$this->setInset($spriteData['data']['inset']);
-					$this->setTitle($this->getTitle());
-
-					$this->isLoaded = true;
-
-					return true;
-				}
-			}
-		}
-
-		while ($row = $result->fetchRow()) {
-			$spriteName = SpriteName::newFromRow($row, $this);
-			if ($spriteName->exists()) {
-				$this->spriteNameCache[$spriteName->getName()] = $spriteName;
-			}
-		}
-		return $this->spriteNameCache;
+	public function getQueryInfo(): array {
+		return [
+			'fields' => [
+				'spritesheet_rev_id' => '',
+				'spritesheet_id' => '',
+				'title' => '',
+				'columns' => '',
+				'rows' => '',
+				'inset' => '',
+				'edited' => '',
+			]
+		];
 	}
 }

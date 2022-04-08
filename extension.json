@@ -1,16 +1,16 @@
 {
 	"name": "SpriteSheet",
-	"version": "1.3.2",
+	"version": "1.4.0",
 	"author": [
 		"Alexia E. Smith",
 		"Hydra Wiki Platform Team"
 	],
-	"url": "https://gitlab.com/HydraWiki/extensions/SpriteSheet",
+	"url": "https://github.com/Wikia/SpriteSheet",
 	"descriptionmsg": "spritesheet_description",
 	"license-name": "LGPL-3.0-only",
 	"type": "other",
 	"requires": {
-		"MediaWiki": ">= 1.31.0"
+		"MediaWiki": ">= 1.37.0"
 	},
 	"GroupPermissions": {
 		"autoconfirmed": {
@@ -56,7 +56,7 @@
 	"AutoloadClasses": {
 		"SpriteSheetHooks": "SpriteSheet.hooks.php",
 		"SpriteSheet": "classes/SpriteSheet.php",
-		"SpriteSheetRemote": "classes/SpriteSheet.php",
+		"SpriteSheetRemote": "classes/SpriteSheetRemote.php",
 		"SpriteName": "classes/SpriteName.php",
 		"SpriteSheetLogFormatter": "classes/SpriteSheetLogFormatter.php",
 		"SpriteNameLogFormatter": "classes/SpriteNameLogFormatter.php",
@@ -107,8 +107,8 @@
 		"PageRenderingHash": [
 			"SpriteSheetHooks::onPageRenderingHash"
 		],
-		"TitleMoveComplete": [
-			"SpriteSheetHooks::onTitleMoveComplete"
+		"PageMoveComplete": [
+			"SpriteSheetHooks::onPageMoveComplete"
 		],
 		"LoadExtensionSchemaUpdates": [
 			"SpriteSheetHooks::onLoadExtensionSchemaUpdates"

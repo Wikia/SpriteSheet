@@ -1,4 +1,10 @@
 <?php
+
+use MediaWiki\Linker\LinkTarget;
+use MediaWiki\MediaWikiServices;
+use MediaWiki\Revision\RevisionRecord;
+use MediaWiki\User\UserIdentity;
+
 /**
  * SpriteSheet
  * SpriteSheet Hooks
@@ -347,7 +353,8 @@ class SpriteSheetHooks {
 	static private function getTitleFromFileName($file) {
 		$title = Title::newFromDBKey($file);
 		if ($title->isRedirect()) {
-			$oldPage = WikiPage::factory($title);
+			$oldPage =
+				MediaWikiServices::getInstance()->getWikiPageFactory()->newFromTitle( $title );
 			$newTitle = $oldPage->getRedirectTarget();
 			if ($newTitle !== null) {
 				$title = $newTitle;
@@ -385,7 +392,7 @@ class SpriteSheetHooks {
 				continue;
 			}
 
-			list($parameter, $option) = explode('=', $raw);
+			[$parameter, $option] = explode('=', $raw);
 			$parameter = strtolower(trim($parameter));
 			$option = trim($option);
 
@@ -483,8 +490,6 @@ class SpriteSheetHooks {
 	 * @return	boolean True
 	 */
 	static public function onImageOpenShowImageInlineBefore(ImagePage $imagePage, OutputPage $output) {
-		global $wgUser;
-
 		$output->addModules('ext.spriteSheet');
 
 		if (strpos($imagePage->getDisplayedFile()->getMimeType(), 'image/') === false) {
@@ -504,11 +509,22 @@ class SpriteSheetHooks {
 			return true;
 		}
 
-		$logLink = Linker::link(SpecialPage::getTitleFor('Log'), wfMessage('sprite_sheet_log')->escaped(), [], ['page' => self::$spriteSheet->getTitle()->getPrefixedText()]);
+		$services = MediaWikiServices::getInstance();
+		$permissionManager = $services->getPermissionManager();
+		$linkRenderer = $services->getLinkRenderer();
+		$logLink = $linkRenderer->makeLink(
+			SpecialPage::getTitleFor( 'Log' ),
+			wfMessage( 'sprite_sheet_log' )->escaped(),
+			[],
+			[ 'page' => self::$spriteSheet->getTitle()->getPrefixedText() ]
+		);
 
 		//Permission checks.
 		$canEdit = true;
-		if (!$wgUser->isAllowed('edit_sprites') || !$imagePage->getTitle()->userCan('edit')) {
+		$user = $output->getUser();
+		if ( !$user->isAllowed( 'edit_sprites' ) ||
+			 !$permissionManager->userCan( 'edit', $user, $imagePage->getTitle() )
+		) {
 			$canEdit = false;
 		}
 
@@ -530,16 +546,17 @@ class SpriteSheetHooks {
 	 * @return	boolean	If rollbacks were performed.
 	 */
 	static private function checkAndDoRollbacks() {
-		global $wgRequest, $wgUser;
-
-		$action = $wgRequest->getVal('sheetAction', false);
+		$context = RequestContext::getMain();
+		$request = $context->getRequest();
+		$user = $context->getUser();
+		$action = $request->getVal('sheetAction', false);
 
 		if (($action == 'diff' || $action == 'rollback')) {
 			//Handle sheet roll backs.
-			if ($wgRequest->getInt('sheetPreviousId') > 0) {
-				self::$oldSpriteSheet = self::$spriteSheet->getRevisionById($wgRequest->getInt('sheetPreviousId'));
+			if ($request->getInt('sheetPreviousId') > 0) {
+				self::$oldSpriteSheet = self::$spriteSheet->getRevisionById($request->getInt('sheetPreviousId'));
 
-				if ($action == 'rollback' && $wgUser->isAllowed('spritesheet_rollback') && self::$oldSpriteSheet !== false) {
+				if ($action == 'rollback' && $user->isAllowed('spritesheet_rollback') && self::$oldSpriteSheet !== false) {
 					//Perform the rollback then redirect to this page with a success message and the editor opened.
 					self::$spriteSheet->setColumns(self::$oldSpriteSheet->getColumns());
 					self::$spriteSheet->setRows(self::$oldSpriteSheet->getRows());
@@ -550,10 +567,10 @@ class SpriteSheetHooks {
 			}
 
 			//Handle individual sprite roll backs.
-			if ($wgRequest->getInt('spritePreviousId') > 0) {
-				$oldSpriteName = SpriteName::newFromRevisionId($wgRequest->getInt('spritePreviousId'));
+			if ($request->getInt('spritePreviousId') > 0) {
+				$oldSpriteName = SpriteName::newFromRevisionId($request->getInt('spritePreviousId'));
 
-				if ($action == 'rollback' && $wgUser->isAllowed('spritesheet_rollback') && $oldSpriteName !== false && $oldSpriteName->getId()) {
+				if ($action == 'rollback' && $user->isAllowed('spritesheet_rollback') && $oldSpriteName !== false && $oldSpriteName->getId()) {
 					$spriteName = SpriteName::newFromId($oldSpriteName->getId(), self::$spriteSheet);
 					if ($spriteName !== false && $spriteName->getId()) {
 						$spriteName->setName($oldSpriteName->getName());
@@ -590,24 +607,33 @@ class SpriteSheetHooks {
 	/**
 	 * Modify the page rendering hash when altering the output.
 	 *
-	 * @access	public
-	 * @param	object	Old Title
-	 * @param	object	New Title
-	 * @param	object	User who performed the move.
-	 * @param	integer	Old/Current ID of the Article/Page
-	 * @param	integer	New(Redirect) ID of redirect page created, if created.
-	 * @param	string	Reason given by the user performing the move.
-	 * @return	boolean True
+	 * @access    public
+	 * @param LinkTarget $old
+	 * @param LinkTarget $new
+	 * @param UserIdentity $userIdentity
+	 * @param int $pageid
+	 * @param int $redirid
+	 * @param string    Reason given by the user performing the move.
+	 * @param RevisionRecord $revision
+	 * @return    boolean True
 	 */
-	static public function onTitleMoveComplete(Title &$oldTitle, Title &$newTitle, User $user, $oldId, $newId, $reason = null) {
-		$spriteSheet = SpriteSheet::newFromTitle($oldTitle);
+	static public function onPageMoveComplete(
+		LinkTarget $old,
+		LinkTarget $new,
+		UserIdentity $userIdentity,
+		int $pageid,
+		int $redirid,
+		string $reason,
+		RevisionRecord $revision
+	) {
+		$spriteSheet = SpriteSheet::newFromTitle($old);
 
 		if (!$spriteSheet || !$spriteSheet->exists()) {
 			//No sprite sheet to update the Title on so we can safely skip this.
 			return true;
 		}
 
-		$spriteSheet->setTitle($newTitle);
+		$spriteSheet->setTitle($new);
 		$spriteSheet->save();
 
 		return true;

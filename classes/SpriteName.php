@@ -1,4 +1,7 @@
 <?php
+
+use MediaWiki\MediaWikiServices;
+
 /**
  * SpriteSheet
  * SpriteName Class
@@ -65,7 +68,8 @@ class SpriteName {
 	 * @return	void
 	 */
 	public function __construct(SpriteSheet $spriteSheet) {
-		$this->DB = wfGetDB(DB_MASTER);
+		$this->DB = MediaWikiServices::getInstance()->getDBLoadBalancer()
+			->getConnectionRef( DB_PRIMARY );
 
 		if (!$spriteSheet->exists()) {
 			throw new MWException(__METHOD__." was called with an invalid SpriteSheet.");
@@ -196,10 +200,8 @@ class SpriteName {
 			'`deleted`'			=> intval($this->isDeleted())
 		];
 
-		$this->DB->startAtomic(__METHOD__);
 		if ($spriteNameId > 0) {
 			if (!$this->saveOldVersion()) {
-				$this->DB->cancelAtomic(__METHOD__);
 				throw new MWException(__METHOD__.': Could not save an old version while attempting to save.');
 			}
 
@@ -225,13 +227,9 @@ class SpriteName {
 			$this->data['spritename_id']	= $spriteNameId;
 			$this->data['edited']			= $save['edited'];
 
-			$this->DB->endAtomic(__METHOD__);
-
 			$this->logChanges();
 
 			$success = true;
-		} else {
-			$this->DB->cancelAtomic(__METHOD__);
 		}
 
 		return $success;
@@ -255,6 +253,7 @@ class SpriteName {
 		$revRow = $revResult->fetchRow();
 		if (is_array($revRow)) {
 			//Sorry.
+			$revRow = $this->getDataForUpdate( $revRow );
 			$oldValues = $revRow['values'];
 			unset($revRow['values']);
 			$revRow['`values`'] = $oldValues;
@@ -280,7 +279,7 @@ class SpriteName {
 	 * @return	void
 	 */
 	private function logChanges() {
-		global $wgUser;
+		$user = RequestContext::getMain()->getUser();
 
 		$extra = [
 			'4:name' => $this->getName()
@@ -302,7 +301,7 @@ class SpriteName {
 		}
 
 		$log = new ManualLogEntry('sprite', $type);
-		$log->setPerformer($wgUser);
+		$log->setPerformer($user);
 		$log->setTarget($this->getSpriteSheet()->getTitle());
 		$log->setComment(null);
 		$log->setParameters($extra);
@@ -522,7 +521,7 @@ class SpriteName {
 	 * @return	mixed	SpriteName or false for no previous revision.
 	 */
 	static public function newFromRevisionId($revisionId) {
-		$DB = wfGetDB(DB_MASTER);
+		$DB = wfGetDB( DB_PRIMARY );
 
 		$revResult = $DB->select(
 			['spritename_rev'],
@@ -567,7 +566,7 @@ class SpriteName {
 	 * @return	mixed	Next revision ID or false if it is not an old revision.
 	 */
 	static public function getNextRevisionId($revisionId) {
-		$DB = wfGetDB(DB_MASTER);
+		$DB = wfGetDB( DB_PRIMARY );
 
 		$revResult = $DB->select(
 			['spritename_rev'],
@@ -594,10 +593,9 @@ class SpriteName {
 	 * @return	mixed	Array of links for performing actions against revisions.  Returns false if none are created.
 	 */
 	public function getRevisionLinks($previousId = false) {
-		global $wgUser;
-
+		$user = RequestContext::getMain()->getUser();
 		$links = false;
-		if ($wgUser->isAllowed('spritesheet_rollback')) {
+		if ($user->isAllowed('spritesheet_rollback')) {
 			if ($previousId === false) {
 				$previousRevision = $this->getPreviousRevision();
 				$arguments['spritePreviousId'] = $previousRevision->getId();
@@ -605,9 +603,44 @@ class SpriteName {
 				$arguments['spritePreviousId'] = intval($previousId);
 			}
 
-			$links['rollback'] = Linker::link($this->getSpriteSheet()->getTitle(), wfMessage('rollbacklink')->escaped(), [], array_merge($arguments, ['sheetAction' => 'rollback']));
+			$linkRenderer = MediaWikiServices::getInstance()->getLinkRenderer();
+			$links['rollback'] = $linkRenderer->makeLink(
+				$this->getSpriteSheet()->getTitle(),
+				wfMessage( 'rollbacklink' )->escaped(),
+				[],
+				array_merge( $arguments, [ 'sheetAction' => 'rollback' ] )
+			);
 		}
 
 		return $links;
+	}
+
+	/**
+	 * FetchRow return data that has both keys as column and as index, therefore
+	 * we need to process it before inserting, so we have only array with
+	 * `column => value` pairs
+	 * @param array $data
+	 * @return array
+	 */
+	private function getDataForUpdate( array $data ) {
+		return array_intersect_key(
+			$data,
+			$this->getQueryInfo()['fields']
+		);
+	}
+
+	public function getQueryInfo(): array {
+		return [
+			'fields' => [
+				'spritename_rev_id' => '',
+				'spritename_id' => '',
+				'spritesheet_id' => '',
+				'name' => '',
+				'type' => '',
+				'values' => '',
+				'edited' => '',
+				'deleted' => '',
+			]
+		];
 	}
 }

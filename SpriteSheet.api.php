@@ -1,4 +1,8 @@
 <?php
+
+use MediaWiki\MediaWikiServices;
+use Wikimedia\ParamValidator\ParamValidator;
+
 /**
  * SpriteSheet
  * SpriteSheet API
@@ -12,38 +16,12 @@
 
 class SpriteSheetAPI extends ApiBase {
 	/**
-	 * API Initialized
-	 *
-	 * @var		boolean
-	 */
-	private $initialized = false;
-
-	/**
-	 * Initiates some needed classes.
-	 *
-	 * @access	public
-	 * @return	void
-	 */
-	private function init() {
-		if (!$this->initialized) {
-			global $wgUser, $wgRequest;
-
-			$this->wgUser		= $wgUser;
-			$this->wgRequest	= $wgRequest;
-
-			$this->initialized = true;
-		}
-	}
-
-	/**
 	 * Main Executor
 	 *
 	 * @access	public
 	 * @return	void	[Outputs to screen]
 	 */
 	public function execute() {
-		$this->init();
-
 		$this->params = $this->extractRequestParams();
 
 		parse_str($this->params['form'], $this->form);
@@ -110,7 +88,14 @@ class SpriteSheetAPI extends ApiBase {
 	 * @return	boolean	Can Edit Sprites
 	 */
 	private function canEditSprites() {
-		return $this->wgUser->isAllowed('edit_sprites') && $this->spriteSheet->getTitle()->userCan('edit');
+		$permissionManager = MediaWikiServices::getInstance()->getPermissionManager();
+
+		return $this->getUser()->isAllowed( 'edit_sprites' ) &&
+			   $permissionManager->userCan(
+				   'edit',
+				   $this->getUser(),
+				   $this->spriteSheet->getTitle()
+			   );
 	}
 
 	/**
@@ -122,44 +107,44 @@ class SpriteSheetAPI extends ApiBase {
 	public function getAllowedParams() {
 		return [
 			'do' => [
-				ApiBase::PARAM_TYPE		=> 'string',
-				ApiBase::PARAM_REQUIRED => true
+				ParamValidator::PARAM_TYPE		=> 'string',
+				ParamValidator::PARAM_REQUIRED => true
 			],
 			'form' => [
-				ApiBase::PARAM_TYPE		=> 'string',
-				ApiBase::PARAM_REQUIRED => false
+				ParamValidator::PARAM_TYPE		=> 'string',
+				ParamValidator::PARAM_REQUIRED => false
 			],
 			'type' => [
-				ApiBase::PARAM_TYPE		=> 'string',
-				ApiBase::PARAM_REQUIRED => false
+				ParamValidator::PARAM_TYPE		=> 'string',
+				ParamValidator::PARAM_REQUIRED => false
 			],
 			'values' => [
-				ApiBase::PARAM_TYPE		=> 'string',
-				ApiBase::PARAM_REQUIRED => false
+				ParamValidator::PARAM_TYPE		=> 'string',
+				ParamValidator::PARAM_REQUIRED => false
 			],
 			'spritesheet_id' => [
-				ApiBase::PARAM_TYPE		=> 'integer',
-				ApiBase::PARAM_REQUIRED => false
+				ParamValidator::PARAM_TYPE		=> 'integer',
+				ParamValidator::PARAM_REQUIRED => false
 			],
 			'spritename_id' => [
-				ApiBase::PARAM_TYPE		=> 'integer',
-				ApiBase::PARAM_REQUIRED => false
+				ParamValidator::PARAM_TYPE		=> 'integer',
+				ParamValidator::PARAM_REQUIRED => false
 			],
 			'old_sprite_name' => [
-				ApiBase::PARAM_TYPE		=> 'string',
-				ApiBase::PARAM_REQUIRED => false
+				ParamValidator::PARAM_TYPE		=> 'string',
+				ParamValidator::PARAM_REQUIRED => false
 			],
 			'new_sprite_name' => [
-				ApiBase::PARAM_TYPE		=> 'string',
-				ApiBase::PARAM_REQUIRED => false
+				ParamValidator::PARAM_TYPE		=> 'string',
+				ParamValidator::PARAM_REQUIRED => false
 			],
 			'sprite_name' => [
-				ApiBase::PARAM_TYPE		=> 'string',
-				ApiBase::PARAM_REQUIRED => false
+				ParamValidator::PARAM_TYPE		=> 'string',
+				ParamValidator::PARAM_REQUIRED => false
 			],
 			'title' => [
-				ApiBase::PARAM_TYPE		=> 'string',
-				ApiBase::PARAM_REQUIRED => false
+				ParamValidator::PARAM_TYPE		=> 'string',
+				ParamValidator::PARAM_REQUIRED => false
 			]
 		];
 	}
@@ -231,7 +216,7 @@ class SpriteSheetAPI extends ApiBase {
 		$success = false;
 		$message = 'ss_api_unknown_error';
 
-		if ($this->wgRequest->wasPosted()) {
+		if ($this->getRequest()->wasPosted()) {
 			if ($this->spriteSheet !== false) {
 				$this->spriteSheet->setColumns($this->form['sprite_columns']);
 				$this->spriteSheet->setRows($this->form['sprite_rows']);
@@ -273,7 +258,7 @@ class SpriteSheetAPI extends ApiBase {
 		$success = false;
 		$message = 'ss_api_unknown_error';
 
-		if ($this->wgRequest->wasPosted()) {
+		if ($this->getRequest()->wasPosted()) {
 			$values = @json_decode($this->params['values'], true);
 
 			if ($this->spriteSheet !== false) {
@@ -365,7 +350,7 @@ class SpriteSheetAPI extends ApiBase {
 		$success = false;
 		$message = 'ss_api_unknown_error';
 
-		if ($this->wgRequest->wasPosted()) {
+		if ($this->getRequest()->wasPosted()) {
 			$spriteNameId = intval($this->params['spritename_id']);
 
 			if ($this->spriteSheet !== false) {
@@ -430,7 +415,7 @@ class SpriteSheetAPI extends ApiBase {
 		$success = false;
 		$message = 'ss_api_unknown_error';
 
-		if ($this->wgRequest->wasPosted()) {
+		if ($this->getRequest()->wasPosted()) {
 			$spriteNameId = intval($this->params['spritename_id']);
 
 			if ($this->spriteSheet !== false) {
